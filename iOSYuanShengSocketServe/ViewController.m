@@ -20,10 +20,12 @@
 @implementation ViewController
 {
     int peerSocketId;
+    NSMutableArray *socketArr;
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
     // Do any additional setup after loading the view, typically from a nib.
+    socketArr = [NSMutableArray array];
 }
 
 - (void)didReceiveMemoryWarning {
@@ -34,13 +36,15 @@
     
     NSThread *thread = [[NSThread alloc]initWithTarget:self selector:@selector(creatServeSocketWithTCP) object:nil];
     [thread start];
-//    [self creatServeSocketWithTCP];
 }
 
 
 - (IBAction)sendInfortoClient:(id)sender {
-    
-    send(peerSocketId, [_sendMessage.text UTF8String], 1024, 0);}
+    for (int i = 0; i < socketArr.count; i++) {
+        
+        NSNumber *soc = socketArr[i];
+        send([soc integerValue], [_sendMessage.text UTF8String], 1024, 0);}
+    }
 
 -(void)showMessage:(NSString *)text
 {
@@ -56,14 +60,14 @@
 //TCP协议
 -(void)creatServeSocketWithTCP
 {
-    // 第一步：创建socket
+    // 1、创建socket
     int error = -1;
-    // 创建socket套接字
+    // 创建socket套接字 第一个参数表示ipv4 网络 SOCK_STREAM 表示流式 使用TCP协议需要设置为流，UDP需要设置为包，后面一位用0，可以选择合适的协议
     int serverSocketId = socket(AF_INET, SOCK_STREAM, 0);
     // 判断创建socket是否成功
     BOOL success = (serverSocketId != -1);
     
-    // 第二步：绑定端口号
+    // 2、绑定端口号
     if (success) {
         
         [self showMessage:@"服务器端Socket创建成功"];
@@ -79,17 +83,17 @@
         // 指定网络协议，比如这里使用的是TCP/UDP则指定为AF_INET
         addr.sin_family = AF_INET;
         
-        // 指定端口号
-        addr.sin_port = htons(8080);
+        // 指定服务器端口号
+        addr.sin_port = htons(8085);
         
         // 指定监听的ip，指定为INADDR_ANY时，表示监听所有的ip
         addr.sin_addr.s_addr = INADDR_ANY;
-        // 绑定套接字
+        // 绑定
         error = bind(serverSocketId, (const struct sockaddr *)&addr, sizeof(addr));
         success = (error == 0);
     }
     
-    // 第三步：监听
+    // 3、监听
     if (success) {
         [self showMessage:@"绑定端口号成功"];
         error = listen(serverSocketId, 5);
@@ -97,58 +101,54 @@
     }
     
     if (success) {
-        [self showMessage:@"监听成功"];
+        [self showMessage:@"监听成功\n处于等待客户端请求..."];
         
+        //服务器一直运行
         while (true) {
             // p2p
             struct sockaddr_in peerAddr;
             
             socklen_t addrLen = sizeof(peerAddr);
             
-            // 第四步：等待客户端连接
+            // 4、等待客户端连接
             // 服务器端等待从编号为serverSocketId的Socket上接收客户连接请求
             peerSocketId = accept(serverSocketId, (struct sockaddr *)&peerAddr, &addrLen);
-            success = (peerSocketId != -1);
             
+            success = (peerSocketId != -1);
+          
             if (success) {
                 
+                [socketArr addObject:@(peerSocketId)];
                 [self showMessage:[NSString stringWithFormat:@"成功接受到客户端请求,客户端地址:%s,端口:%d",
                                    inet_ntoa(peerAddr.sin_addr),
                                    ntohs(peerAddr.sin_port)]];
-              
-                char buf[1024];
-                size_t len = sizeof(buf);
-              
-                while (1) {
-                    
-                    recv(peerSocketId, buf, len, 0);
-                    if (strlen(buf) != 0) {
-                    NSString *str = [NSString stringWithCString:buf encoding:NSUTF8StringEncoding];
-                    if (str.length >= 1) {
-                        [self showMessage:str];
-                            }
-                    }
+                [self showMessage:@"TCP连接完成，可以实现数据收发啦\n\n"];
+                NSThread *thred = [[NSThread alloc]initWithTarget:self selector:@selector(readData:) object:[NSNumber numberWithInt:peerSocketId]];
+                [thred start];
 
-                }
-                
-//                // 第五步：接收来自客户端的信息
-//                do {
-//                    // 接收来自客户端的信息
-//                    recv(peerSocketId, buf, len, 0);
-//                    if (strlen(buf) != 0) {
-//                        NSString *str = [NSString stringWithCString:buf encoding:NSUTF8StringEncoding];
-//                        if (str.length >= 1) {
-//                            [self showMessage:str];
-//                        }
-//                    }
-//                } while (strcmp(buf, "exit") != 0);
-//                
-                
-                // 第六步：关闭socket
-//                close(peerSocketId);
             }
         }
     }
+    
+//    close(serverSocketId);
+}
+
+// 读客户端数据
+-(void) readData:(NSNumber*) clientSocket{
+    char buffer[1024];
+    int intSocket = [clientSocket intValue];
+    
+    while(buffer[0] != '-'){
+        
+        bzero(buffer,1024);
+        //接收客户端发送来的信息到buffer中
+        recv(intSocket,buffer,1024,0);
+        
+        [self showMessage:[NSString stringWithCString:buffer encoding:NSUTF8StringEncoding]];
+    }
+    //关闭与客户端的连接
+    [self showMessage:@"Socket 关闭"];
+    close(intSocket);
 }
 //UDP协议
 +(void)creatServeSocketUDPConnetc
@@ -173,7 +173,7 @@
     
     ser_addr.sin_family = AF_INET;
     ser_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    ser_addr.sin_port = htons(1024);
+    ser_addr.sin_port = htons(8098);
     
     // 第二步：绑定端口号
     if(bind(serverSockerId, (struct sockaddr *)&ser_addr, addrlen) < 0) {
@@ -181,23 +181,20 @@
         return;
     }
     
-    do {
+    while (1) {
+        
         bzero(buff, sizeof(buff));
         
-        // 第三步：接收客户端的消息
+        // 3、接收客户端的消息
         len = recvfrom(serverSockerId, buff, sizeof(buff), 0, (struct sockaddr *)&ser_addr, &addrlen);
-        // 显示client端的网络地址
-        NSLog(@"receive from %s\n", inet_ntoa(ser_addr.sin_addr));
         // 显示客户端发来的字符串
         NSLog(@"recevce:%s", buff);
-        
-        // 第四步：将接收到的客户端发来的消息，发回客户端
-        // 将字串返回给client端
-        sendto(serverSockerId, buff, len, 0, (struct sockaddr *)&ser_addr, addrlen);
-    } while (strcmp(buff, "exit") != 0);
+
+        //sendto(serverSockerId, buff, len, 0, (struct sockaddr *)&ser_addr, addrlen); 发送信息
+    }
     
     // 第五步：关闭socket
-    close(serverSockerId);
+//    close(serverSockerId);
 }
 
 -(void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
